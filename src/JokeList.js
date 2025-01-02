@@ -4,49 +4,73 @@ import Joke from "./Joke";
 import "./JokeList.css";
 
 function JokeList({ numJokesToGet = 5 }) {
-  const [jokes, setJokes] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [jokes, setJokes] = useState(() => {
+    const savedJokes = JSON.parse(localStorage.getItem("jokes"))
+    return savedJokes || []
+  });
+  const [isLoading, setIsLoading] = useState(jokes.length === 0);
 
   const getJokes = useCallback(async () => {
     try {
-      let jokes = [];
-      let seenJokes = new Set();
+      const newJokes = [];
+      const seenJokes = new Set(jokes.filter(j => !j.isLocked).map(j => j.id));
 
-      while (jokes.length < numJokesToGet) {
-        let res = await axios.get("https://icanhazdadjoke.com", {
+      while (newJokes.length < numJokesToGet) {
+        // Fetch a single joke to reduce API usage
+        const res = await axios.get("https://icanhazdadjoke.com", {
           headers: { Accept: "application/json" },
         });
-        let { id, joke } = res.data;
+
+        const { id, joke } = res.data;
 
         if (!seenJokes.has(id)) {
           seenJokes.add(id);
-          jokes.push({ id, joke, votes: 0 });
+          newJokes.push({ id, joke, votes: 0, isLocked: false });
         } else {
           console.log("duplicate found!");
         }
       }
 
-      setJokes(jokes);
+      const updatedJokes = jokes.filter(j => j.isLocked).concat(newJokes);
+      setJokes(updatedJokes);
+      localStorage.setItem("jokes", JSON.stringify(updatedJokes));
       setIsLoading(false);
     } catch (err) {
-      console.error(err);
+      if (err.response && err.response.status === 429) {
+        console.error("Rate limit exceeded. Try again later.");
+      } else {
+        console.error("An error occurred while fetching jokes:", err);
+      }
+      setIsLoading(false);
     }
-  }, [numJokesToGet]);
+  }, [jokes, numJokesToGet]);
+
 
   useEffect(() => {
-    getJokes();
-  }, [getJokes]);
+    if (isLoading) getJokes();
+  }, [isLoading, getJokes]);
 
   const generateNewJokes = () => {
     setIsLoading(true);
-    getJokes();
   };
 
+  const resetVotes = () => {
+    const resetJokes = jokes.map(j => ({ ...j, votes: 0 }))
+    setJokes(resetJokes)
+    localStorage.setItem("jokes", JSON.stringify(resetJokes))
+  }
+
   const vote = (id, delta) => {
-    setJokes((jokes) =>
-      jokes.map((j) => (j.id === id ? { ...j, votes: j.votes + delta } : j))
-    );
+    const updatedJokes = jokes.map(j => j.id === id ? {...j, votes: j.votes + delta} : j)
+    setJokes(updatedJokes)
+    localStorage.setItem("jokes", JSON.stringify(updatedJokes))
   };
+
+  const toggleLock = id => {
+    const updatedJokes = jokes.map(j => j.id === id ? {...j, isLocked: !j.isLocked } : j)
+    setJokes(updatedJokes)
+    localStorage.setItem("jokes", JSON.stringify(updatedJokes))
+  }
 
   if (isLoading) {
     return (
@@ -63,6 +87,9 @@ function JokeList({ numJokesToGet = 5 }) {
       <button className="JokeList-getmore" onClick={generateNewJokes}>
         Get New Jokes
       </button>
+      <button className="JokeList-reset" onClick={resetVotes}>
+        Reset Votes
+      </button>
 
       {sortedJokes.map((j) => (
         <Joke
@@ -71,6 +98,8 @@ function JokeList({ numJokesToGet = 5 }) {
           id={j.id}
           votes={j.votes}
           vote={vote}
+          isLocked={j.isLocked}
+          toggleLock={toggleLock}
         />
       ))}
     </div>
